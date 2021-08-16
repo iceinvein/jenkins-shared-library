@@ -1,18 +1,20 @@
 import groovy.json.JsonSlurperClassic
 
-def call(String dockerUrl, String imageName, String tag, String registryConfig, String registryAuth, String gitUrl,
+def call(String dockerUrl, String imageName, String tag, String registryConfig, String registryAuth, String gitUrl, String gitCredential,
          LinkedHashMap<String, String> buildArgs) {
-    buildDockerImage(dockerUrl, imageName, tag ?: 'latest', registryConfig, gitUrl, buildArgs)
+    String imageId = buildDockerImage(dockerUrl, imageName, tag ?: 'latest', registryConfig, getGitUrl(gitUrl, gitCredential), buildArgs)
     executeApi(getUrl(getDockerPushUrl(dockerUrl, imageName, tag ?: 'latest'), 'X-Registry-Auth', registryAuth))
 }
 
 def buildDockerImage(String dockerUrl, String imageName, String tag, String registryConfig, String gitUrl,
-                     LinkedHashMap<String, String> buildArgs) {
+         LinkedHashMap<String, String> buildArgs) {
 
-    def parameters = ['t'     : "${imageName}:${tag}",
-                      'pull'  : '',
-                      'remote': gitUrl,]
-
+    def parameters = [
+        't': "${imageName}:${tag}",
+        'pull': '',
+        'remote': gitUrl,
+    ]
+    
     if (!buildArgs.isEmpty()) {
         parameters.put('buildargs', getBuildArgsParameters(buildArgs))
     }
@@ -20,30 +22,32 @@ def buildDockerImage(String dockerUrl, String imageName, String tag, String regi
     return executeApi(getUrl(getDockerBuildUrl(dockerUrl, parameters), 'X-Registry-Config', registryConfig))
 }
 
-static def getBuildArgsParameters(LinkedHashMap<String, String> buildArgs) {
+def getBuildArgsParameters(LinkedHashMap<String, String> buildArgs) {
     return "{${buildArgs.collect { k, v -> "\"$k\":\"$v\"" }.join(',')}}"
 }
 
-static def getDockerBuildUrl(String dockerUrl, LinkedHashMap<String, String> parameters) {
+def getDockerBuildUrl(String dockerUrl, LinkedHashMap<String, String> parameters) {
     return "${dockerUrl}/build?${getParametersString(parameters)}"
 }
 
-static def getDockerPushUrl(String dockerUrl, String imageName, String tag) {
+def getDockerPushUrl(String dockerUrl, String imageName, String tag) {
     return "${dockerUrl}/images/${URLEncoder.encode(imageName, 'UTF-8')}/push?tag=${URLEncoder.encode(tag, 'UTF-8')}"
 }
 
-static def getUrl(String urlString, String requestPropertyType, String requestPropertyValue) {
+def getUrl(String urlString, String requestPropertyType, String requestPropertyValue) {
     def url = new URL(urlString)
     def connection = (HttpURLConnection) url.openConnection()
 
     connection.setRequestMethod('POST')
     connection.setRequestProperty(requestPropertyType,
-                                  requestPropertyValue)
+                                requestPropertyValue)
 
     return connection
 }
 
 def executeApi(HttpURLConnection connection) {
+    String imageId
+
     try {
         def response = new StringBuilder()
 
@@ -52,18 +56,18 @@ def executeApi(HttpURLConnection connection) {
 
         def httpResponseScanner = new Scanner(connection.getInputStream())
 
-        while (httpResponseScanner.hasNextLine()) {
+        while(httpResponseScanner.hasNextLine()) {
             if (responseCode == 200) {
                 def lineObject = new JsonSlurperClassic().parseText(httpResponseScanner.nextLine())
                 if (lineObject?.stream) {
                     if (lineObject.stream.contains('Successfully built')) {
-                        imageId = (lineObject.stream as String).split(' ')[2].trim()
+                        imageId = lineObject.stream.split(' ')[2].trim()
                     }
-                    response.append(lineObject.stream as String)
+                    response.append(lineObject.stream)
                 } else if (lineObject?.errorDetail) {
-                    response.append(lineObject.errorDetail.message as String)
+                    response.append(lineObject.errorDetail.message)
                 } else if (lineObject?.status) {
-                    response.append(lineObject.status as String)
+                    response.append(lineObject.status)
                     if (lineObject?.progress) {
                         response.append(" ${lineObject?.progress}\n")
                     } else {
@@ -72,11 +76,11 @@ def executeApi(HttpURLConnection connection) {
                 } else if (lineObject?.aux) {
                     if (lineObject.aux?.ID) {
                         response.append("${lineObject.aux.ID}\n")
-                    }
+                    }              
                 }
             } else {
                 response.append(httpResponseScanner.nextLine())
-            }
+            }                        
         }
         httpResponseScanner.close()
 
@@ -85,6 +89,8 @@ def executeApi(HttpURLConnection connection) {
         }
 
         echo(response.toString())
+
+        return imageId
     } catch (err) {
         error("Error: ${err.toString()}")
     }
@@ -97,7 +103,7 @@ static def getParametersString(LinkedHashMap<String, String> params) {
         result.append(URLEncoder.encode(it.key, 'UTF-8'))
         if (it.value.length() > 0) {
             result.append('=')
-            result.append(URLEncoder.encode(it.value, 'UTF-8'))
+            result.append(URLEncoder.encode(it.value, 'UTF-8'))            
         }
         result.append('&')
     }
@@ -106,11 +112,11 @@ static def getParametersString(LinkedHashMap<String, String> params) {
     return resultString.length() > 0 ? resultString.substring(0, resultString.length() - 1) : resultString
 }
 
-static def getGitUrl(String gitUrl, String credential) {
+def getGitUrl(String gitUrl, String credential) {
     def sb = new StringBuilder(gitUrl)
     int idx = gitUrl.indexOf('//')
 
     sb.insert(idx + 2, "${credential}@")
-
+    
     return sb.toString()
 }
