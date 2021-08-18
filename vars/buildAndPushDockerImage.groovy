@@ -82,6 +82,9 @@ def executeApi(HttpURLConnection connection) {
                 def lineObject = new JsonSlurperClassic().parseText(httpResponseScanner.nextLine())
                 if (lineObject?.stream) {
                     response.append(lineObject.stream as String)
+                    if (lineObject.stream.contains('non-zero code')) {
+                        error(response.toString())
+                    }
                 } else if (lineObject?.errorDetail) {
                     response.append(lineObject.errorDetail.message as String)
                 } else if (lineObject?.status) {
@@ -101,10 +104,6 @@ def executeApi(HttpURLConnection connection) {
             }
         }
         httpResponseScanner.close()
-
-        if (responseCode >= 400) {
-            error("API Error: ${responseCode}\n${response.toString()}")
-        }
 
         echo(response.toString())
     } catch (err) {
