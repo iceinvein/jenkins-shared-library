@@ -1,38 +1,66 @@
 import groovy.json.JsonSlurperClassic
 
-def call(String dockerUrl, String imageName, String tag, String registryConfig, String registryAuth, String gitUrl,
-         String gitCredential,
-         LinkedHashMap<String, String> buildArgs) {
-    buildDockerImage(dockerUrl, imageName, tag ?: 'latest', registryConfig, getGitUrl(gitUrl, gitCredential), buildArgs)
-    executeApi(getUrl(getDockerPushUrl(dockerUrl, imageName, tag ?: 'latest'), 'X-Registry-Auth', registryAuth))
+def call(String dockerUrl, String imageName, String registryConfig, String registryAuth,
+         String gitUrl, String gitCredential, LinkedHashMap<String, String> buildArgs) {
+    call(dockerUrl, imageName, registryConfig, registryAuth, gitUrl, gitCredential, '', buildArgs)
 }
 
-def buildDockerImage(String dockerUrl, String imageName, String tag, String registryConfig, String gitUrl,
-                     LinkedHashMap<String, String> buildArgs) {
-    LinkedHashMap<String, String> parameters = ['t'     : "${imageName}:${tag}",
-                                                'pull'  : '',
+def call(String dockerUrl, String imageName, String registryConfig, String registryAuth,
+         String gitUrl, String gitCredential, String dockerfile, LinkedHashMap<String, String> buildArgs) {
+    buildDockerImage(dockerUrl, imageName, [], registryConfig, getGitUrl(gitUrl, gitCredential), dockerfile, buildArgs)
+    executeApi(getUrl(getDockerPushUrl(dockerUrl, imageName, 'latest'), 'X-Registry-Auth', registryAuth))
+}
+
+def call(String dockerUrl, String imageName, String tag, String registryConfig, String registryAuth,
+         String gitUrl, String gitCredential, String dockerfile, LinkedHashMap<String, String> buildArgs) {
+    call(dockerUrl, imageName, [tag], registryConfig, registryAuth, gitUrl, gitCredential, dockerfile, buildArgs)
+}
+
+def call(String dockerUrl, String imageName, List<String> tag, String registryConfig, String registryAuth,
+         String gitUrl, String gitCredential, String dockerfile, LinkedHashMap<String, String> buildArgs) {
+    buildDockerImage(dockerUrl, imageName, tag, registryConfig, getGitUrl(gitUrl, gitCredential), dockerfile, buildArgs)
+    tag.each {
+        executeApi(getUrl(getDockerPushUrl(dockerUrl, imageName, it), 'X-Registry-Auth', registryAuth))
+    }
+}
+
+def buildDockerImage(String dockerUrl, String imageName, List<String> tag, String registryConfig, String gitUrl,
+                     String dockerfile, LinkedHashMap<String, String> buildArgs) {
+    LinkedHashMap<String, String> parameters = ['pull'  : '',
                                                 'remote': gitUrl,]
+
+    if (dockerfile.length() > 0) {
+        parameters.put('dockerfile', dockerfile)
+    }
 
     if (!buildArgs.isEmpty()) {
         parameters.put('buildargs', getBuildArgsParameters(buildArgs))
     }
 
+    if (tag.isEmpty()) {
+        parameters.put('t', "${imageName}")
+    } else {
+        tag.each {
+            parameters.put('t', "${imageName}:${it}")
+        }
+    }
+
     return executeApi(getUrl(getDockerBuildUrl(dockerUrl, parameters), 'X-Registry-Config', registryConfig))
 }
 
-static def getBuildArgsParameters(LinkedHashMap<String, String> buildArgs) {
+static String getBuildArgsParameters(LinkedHashMap<String, String> buildArgs) {
     return "{${buildArgs.collect { k, v -> "\"$k\":\"$v\"" }.join(',')}}"
 }
 
-static def getDockerBuildUrl(String dockerUrl, LinkedHashMap<String, String> parameters) {
+static String getDockerBuildUrl(String dockerUrl, LinkedHashMap<String, String> parameters) {
     return "${dockerUrl}/build?${getParametersString(parameters)}"
 }
 
-static def getDockerPushUrl(String dockerUrl, String imageName, String tag) {
+static String getDockerPushUrl(String dockerUrl, String imageName, String tag) {
     return "${dockerUrl}/images/${URLEncoder.encode(imageName, 'UTF-8')}/push?tag=${URLEncoder.encode(tag, 'UTF-8')}"
 }
 
-static def getUrl(String urlString, String requestPropertyType, String requestPropertyValue) {
+static HttpURLConnection getUrl(String urlString, String requestPropertyType, String requestPropertyValue) {
     URL url = new URL(urlString)
     HttpURLConnection connection = (HttpURLConnection) url.openConnection()
 
@@ -43,7 +71,7 @@ static def getUrl(String urlString, String requestPropertyType, String requestPr
     return connection
 }
 
-static def getParametersString(LinkedHashMap<String, String> params) {
+static String getParametersString(LinkedHashMap<String, String> params) {
     StringBuilder result = new StringBuilder()
 
     params.each {
@@ -59,7 +87,7 @@ static def getParametersString(LinkedHashMap<String, String> params) {
     return resultString.length() > 0 ? resultString.substring(0, resultString.length() - 1) : resultString
 }
 
-static def getGitUrl(String gitUrl, String credential) {
+static String getGitUrl(String gitUrl, String credential) {
     StringBuilder sb = new StringBuilder(gitUrl)
     int idx = gitUrl.indexOf('//')
 
